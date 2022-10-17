@@ -1,63 +1,115 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Net;
-using System.Net.Http;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
-using System.Security.Policy;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace HttpGetServer
 {
     class HttpGetServer
     {
-        // THIS IS A SERVER AND A CLIENT AT THE SAME TIME!
-
-        // Represents the server where the client will connect
         private TcpListener server;
         private int listeningPort;
-
-        // Represents the client that will connect to us
         private TcpClient client;
-
-        // For writing and reading messages
         private NetworkStream stream;
-
-        // For the orange flash on the taskbar icon
+        private string indexPage;
         IntPtr handle;
 
         public HttpGetServer()
         {
             Console.Title = "HttpGetServer";
             handle = Process.GetCurrentProcess().MainWindowHandle;
-            server = new TcpListener(IPAddress.Any, 7676);
+            indexPage = "index.html";
         }
 
-        // Goes through everything until the conversation can start
         public void Start()
         {
-            // These methods all handle validation by themselves
-            // You can only switch their order here, which is not recommended
-            Logo();
+            bool ok = false;
+            while (!ok)
+            {
+                Console.Write("Listening PORT: ");
+                try
+                {
+                    listeningPort = int.Parse(Console.ReadLine());
+                    ok = true;
+                }
+                catch (Exception)
+                {
+                    Console.Clear();
+                }
+            }
 
+            Console.Clear();
+            Console.WriteLine("   __ ____  __       _____    __  ____                    ");
+            Console.WriteLine("  / // / /_/ /____  / ___/__ / /_/ __/__ _____  _____ ____");
+            Console.WriteLine(" / _  / __/ __/ _ \\/ (_ / -_) __/\\ \\/ -_) __/ |/ / -_) __/");
+            Console.WriteLine("/_//_/\\__/\\__/ .__/\\___/\\__/\\__/___/\\__/_/  |___/\\__/_/   ");
+            Console.WriteLine("            /_/                                           by erwin");
+
+            server = new TcpListener(IPAddress.Any, listeningPort);
             server.Start();
+            setTextColor(1);
+            Console.WriteLine(DateTime.Now.ToString("[HH:mm:ss] ") + "Server started at PORT: " + listeningPort);
 
+            RequestListenLoop();
+        }
+
+        private void RequestListenLoop()
+        {
             while (true)
             {
                 Handshaking();
-                Responding();
-                CloseConnection();
+                Respond();
+                ResetConnection();
             }
         }
 
+        public bool Handshaking()
+        {
+            setTextColor(1);
 
-        // So multiple browsers can make requests
-        private void CloseConnection()
+            client = server.AcceptTcpClient();
+            stream = client.GetStream();
+
+            Console.WriteLine(DateTime.Now.ToString("[HH:mm:ss] ") + "Connection established with: " + client.Client.RemoteEndPoint);
+
+            return true;
+        }
+
+        private void Respond()
+        {
+            setTextColor(2);
+
+            string receivedRequest = ReceiveRequest() + "\n";
+
+            Console.WriteLine("[HH:mm:ss] " + receivedRequest + "\n");
+
+            FlashWindow(handle, true);
+
+            string URL = getRequestedUrl(receivedRequest);
+            string HTML = "";
+            try
+            {
+                HTML = File.ReadAllText(URL);
+            }
+            catch (Exception)
+            {
+                // In case of 404.html is not accessible or found
+                SendResponse("HTTP/1.1 404 Not Found\r\nContent-Type: text/text\r\nContent-Length: 13\r\n\r\n404 Not Found");
+                return;
+            }
+
+            SendResponse("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: " + HTML.Length + "\r\n\r\n" + HTML);
+
+            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.WriteLine(DateTime.Now.ToString("[HH:mm:ss] ") + "Waiting for next request");
+        }
+
+        // Without this it won't work with multiple browsers
+        // But sometimes it doesn't work anyways... You then need to refresh the page IN EVERY, then it should work properly
+        private void ResetConnection()
         {
             client.GetStream().Close();
             client.Close();
@@ -65,46 +117,50 @@ namespace HttpGetServer
             server.Start();
         }
 
-        private void Responding()
+        private string getRequestedUrl(string request)
         {
-            setTextColor(2);
-            // Formatting the received message
-            string receivedMessage = DateTime.Now.ToString("[HH:mm:ss] ") + ReceiveRequest() + "\n";
+            int firstRowEnd = request.IndexOf("\r\n");
+            string firstRow = "";
 
-            // Output the received message with a retro terminal effect
-            Console.WriteLine(receivedMessage);
+            // Sometimes the server can crash here, 
+            // I tested it a lot, we will always get our page. Even if I return a 404 here
+            try
+            {
+                firstRow = request.Substring(0, firstRowEnd);
+            }
+            catch (Exception)
+            {
+                return "404.html";
+            }
 
-            // Orange flash effect on taskbar, to notify a new message has arrived
-            FlashWindow(handle, true);
+            if (firstRow.Contains("GET / ") || (firstRow.Contains("GET /") && firstRow.Contains(".html")))
+            {
+                int endIndex = request.IndexOf(" HTTP/1.1");
+                string path = request.Substring(5, endIndex - 4);
 
-            string URL = getRequestedUrl(receivedMessage);
+                if (path == " ")
+                {
+                    return indexPage;
+                }
+                else return path;
+            }
 
-            //string htmlFile = File.ReadAllText(URL);
-            SendResponse("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 12\r\n\r\nHello world!");
-            //SendResponse("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + GetContentLength(URL) + "\r\n\r\n" + htmlFile);
+            // First time I tested it the first row of the request won't always look like GET {page here} HTTP/1.1
+            // That's why the upper rows are complicated...
+            /*string port = listeningPort.ToString();
+            if (firstRow.Contains(port + "/\n") || (firstRow.Contains(port + '/') && firstRow.Contains(".html")))
+            {
+                int index = request.IndexOf(port + '/');
+                string path = request.Substring(index, firstRowEnd);
 
-            Console.ForegroundColor = ConsoleColor.Magenta;
-            Console.WriteLine(DateTime.Now.ToString("[HH:mm:ss] ") + "Waiting for next request");
-        }
+                if (path == " ")
+                {
+                    return request;
+                }
+                else return path;
+            }*/
 
-        private string getRequestedUrl(string receivedMessage)
-        {
-            return receivedMessage.Substring(15, receivedMessage.IndexOf("HTTP/1.1") - 15);
-        }
-
-        public bool Handshaking()
-        {
-            // Waiting for client to connect
-            client = server.AcceptTcpClient();
-
-            // After successfull connection get the stream ready to read and write
-            stream = client.GetStream();
-
-            // Status text
-            Console.WriteLine(DateTime.Now.ToString("[HH:mm:ss] ") + "Connection established with: " + client.Client.RemoteEndPoint);
-
-            // This means the connection has been established, we can continue, see Run(); method
-            return true;
+            return "404.html";
         }
 
         public string ReceiveRequest()
@@ -115,8 +171,6 @@ namespace HttpGetServer
 
             string receivedMessage = Encoding.Default.GetString(buffer);
 
-            // Buffer size is larger than the actual message
-            // The rest is filled with '\0' (' '), we trim it
             receivedMessage = receivedMessage.TrimEnd('\0');
 
             return receivedMessage;
@@ -142,23 +196,6 @@ namespace HttpGetServer
             }
         }
 
-        public int GetContentLength(string URL)
-        {
-            return 1;
-        }
-
-        public void Logo()
-        {
-            // Small Slant
-            Console.Clear();
-            Console.WriteLine("   __ ____  __       _____    __  ____                    ");
-            Console.WriteLine("  / // / /_/ /____  / ___/__ / /_/ __/__ _____  _____ ____");
-            Console.WriteLine(" / _  / __/ __/ _ \\/ (_ / -_) __/\\ \\/ -_) __/ |/ / -_) __/");
-            Console.WriteLine("/_//_/\\__/\\__/ .__/\\___/\\__/\\__/___/\\__/_/  |___/\\__/_/   ");
-            Console.WriteLine("            /_/                                           by erwin");
-        }
-
-        // For the orange flash on the taskbar icon
         [DllImport("user32.dll")]
         static extern bool FlashWindow(IntPtr hwnd, bool bInvert);
     }
@@ -168,10 +205,7 @@ namespace HttpGetServer
         static void Main(string[] args)
         {
             HttpGetServer server = new HttpGetServer();
-            server.Logo();
             server.Start();
-
-            Console.ReadKey();
         }
     }
 }
